@@ -11,8 +11,9 @@ st.set_page_config(page_title="CDRAD Analyzer Pro", layout="wide")
 st.title("CDRAD Analyzer Pro ⚛️")
 st.write("Software de análise automatizada do fantoma CDRAD para otimização de doses.")
 
-diametros_y = [8.0, 6.3, 5.0, 4.0, 3.2, 2.5, 2.0, 1.6, 1.3, 1.0, 0.8, 0.6, 0.5, 0.4, 0.3] 
-profundidades_x = [0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.3, 1.6, 2.0, 2.5, 3.2, 4.0, 5.0, 6.3, 8.0] 
+# Definição EXATA das dimensões do CDRAD 2.0
+diametros_y = [8.0, 6.3, 5.0, 4.0, 3.2, 2.5, 2.0, 1.6, 1.3, 1.0, 0.8, 0.6, 0.5, 0.4, 0.3] # Linhas (Cima -> Baixo)
+profundidades_x = [0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.3, 1.6, 2.0, 2.5, 3.2, 4.0, 5.0, 6.3, 8.0] # Colunas (Esq -> Dir)
 
 # --- MENU LATERAL ---
 st.sidebar.header("🔧 Controles da Imagem")
@@ -21,7 +22,6 @@ espelhar_h = st.sidebar.checkbox("↔️ Espelhar Horizontalmente")
 espelhar_v = st.sidebar.checkbox("↕️ Espelhar Verticalmente")
 angulo_rotacao = st.sidebar.number_input("🔄 Alinhamento Fino (Graus)", min_value=-180.0, max_value=180.0, value=0.0, step=0.1, format="%.1f")
 
-# --- NOVO: MODO TELECOMANDADO ---
 st.sidebar.subheader("2. Perfil do Equipamento")
 modo_telecomandado = st.sidebar.checkbox("☢️ Modo Telecomandado / Fluoroscopia")
 st.sidebar.caption("Ative se a imagem tiver bordas hexagonais ou distorção circular para ignorar zonas mortas.")
@@ -49,7 +49,6 @@ if arquivo_dicom is not None:
 
     st.markdown("---")
     st.subheader("✂️ Recorte Interativo da Matriz (ROI)")
-    st.warning("Recorte apenas a área da grade. No modo telecomandado, tudo bem se as bordas pretas entrarem um pouco no quadrado, o software tentará ignorá-las.")
     
     img_pil = Image.fromarray(imagem_processada)
     imagem_recortada_pil = st_cropper(img_pil, realtime_update=True, box_color='#0000FF', aspect_ratio=(1, 1))
@@ -83,12 +82,10 @@ if arquivo_dicom is not None:
                     std_cel = np.std(roi_celula)
                     media_cel = np.mean(roi_celula)
                     
-                    # Lógica de detecção
                     detectado = False
                     ignorado = False
                     
                     if modo_telecomandado:
-                        # Se o desvio padrão for absurdo (> 60) ou a média for muito escura/clara, é a borda do colimador
                         if std_cel > 60 or media_cel < 30 or media_cel > 220:
                             ignorado = True
                         elif std_cel > sensibilidade:
@@ -97,9 +94,7 @@ if arquivo_dicom is not None:
                         if std_cel > sensibilidade:
                             detectado = True
 
-                    # Desenhando os resultados
                     if ignorado:
-                        # Pinta de azul com um X se for zona morta do telecomandado
                         ax_img.add_patch(plt.Rectangle((x, y), cell_w, cell_h, linewidth=1, edgecolor='b', facecolor='none', alpha=0.3))
                         ax_img.plot([x, x+cell_w], [y, y+cell_h], color='b', alpha=0.5, linewidth=1)
                         ax_img.plot([x+cell_w, x], [y, y+cell_h], color='b', alpha=0.5, linewidth=1)
@@ -115,9 +110,26 @@ if arquivo_dicom is not None:
 
     with col2:
         st.subheader("📊 Métricas e Curva C-D")
-        st.metric("Quadrados Detectados (Válidos)", f"{contagem_vistos}")
+        
+        # --- CÁLCULO E RETORNO DAS MÉTRICAS SOLICITADAS ---
+        indices_detectados = np.where(matriz_deteccao == 1)
+        if len(indices_detectados[0]) > 0:
+            # O menor diâmetro visível corresponde ao maior índice de linha encontrado
+            menor_dia = diametros_y[np.max(indices_detectados[0])] 
+            # A menor profundidade visível corresponde ao menor índice de coluna encontrado
+            menor_prof = profundidades_x[np.min(indices_detectados[1])] 
+        else:
+            menor_dia, menor_prof = 0.0, 0.0
+
+        met_res_esp, met_threshold = st.columns(2)
+        with met_res_esp:
+            st.metric("Res. Espacial (Diâmetro)", f"{menor_dia} mm" if menor_dia > 0 else "Nenhum")
+        with met_threshold:
+            st.metric("Baixo Contraste (Prof.)", f"{menor_prof} mm" if menor_prof > 0 else "Nenhum")
+        
         st.divider()
         
+        # --- CÁLCULO DO IQF E PREPARAÇÃO DO GRÁFICO ---
         iqf = 0
         profundidades_grafico = [] 
         diametros_grafico = []     
@@ -141,8 +153,10 @@ if arquivo_dicom is not None:
         with col_iqf2:
             st.metric("IQF Inverso", f"{iqf_inv:.2f}")
         
+        st.caption(f"ℹ️ Total de Quadrados Válidos Detectados: {contagem_vistos} / 225")
         st.divider()
         
+        # --- GRÁFICO C-D ---
         st.write("**Curva Contraste-Detalhe (C-D)**")
         fig_grafico, ax_grafico = plt.subplots(figsize=(6, 4))
         
