@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 import cv2
 from PIL import Image
 from streamlit_cropper import st_cropper
-from datetime import datetime
 
 st.set_page_config(page_title="CDRAD Analyzer Pro", layout="wide")
 
@@ -23,7 +22,6 @@ angulo_rotacao = st.sidebar.number_input("🔄 Alinhamento Fino (Graus)", min_va
 
 st.sidebar.subheader("2. Sensibilidade")
 sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 30, 12)
-st.sidebar.info("As margens de recorte agora são feitas diretamente na imagem usando o mouse!")
 
 arquivo_dicom = st.file_uploader("Faça o upload da imagem DICOM do CDRAD (.dcm)", type=["dcm"])
 
@@ -45,18 +43,11 @@ if arquivo_dicom is not None:
 
     st.markdown("---")
     st.subheader("✂️ Recorte Interativo da Matriz (ROI)")
-    st.write("Desenhe o quadrado azul exatamente sobre a área dos furos do fantoma.")
     
-    # Converte o array do OpenCV para imagem PIL para o cropper funcionar
     img_pil = Image.fromarray(imagem_processada)
-    
-    # O componente de recorte interativo (forçado a ser um quadrado)
     imagem_recortada_pil = st_cropper(img_pil, realtime_update=True, box_color='#0000FF', aspect_ratio=(1, 1))
     
-    # Converte de volta para NumPy após o usuário recortar
     imagem_roi_bruta = np.array(imagem_recortada_pil)
-    
-    # Aplica o CLAHE APENAS no recorte (muito melhor fisicamente, ignora o fundo escuro)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     imagem_roi = clahe.apply(imagem_roi_bruta)
 
@@ -88,7 +79,21 @@ if arquivo_dicom is not None:
 
     with col2:
         st.subheader("📊 Métricas e Curva C-D")
-        st.metric("Quadrados Detectados", f"{contagem_vistos} / 225")
+        
+        indices_detectados = np.where(matriz_deteccao == 1)
+        if len(indices_detectados[1]) > 0:
+            menor_dia = dimensoes[np.min(indices_detectados[1])] 
+            menor_prof = dimensoes[np.min(indices_detectados[0])] 
+        else:
+            menor_dia, menor_prof = 0, 0
+
+        met_res_esp, met_threshold = st.columns(2)
+        with met_res_esp:
+            st.metric("Res. Espacial (Diâmetro)", f"{menor_dia} mm")
+        with met_threshold:
+            st.metric("Baixo Contraste (Prof.)", f"{menor_prof} mm")
+        
+        st.divider()
         
         iqf = 0
         profundidades_grafico = [] 
@@ -99,27 +104,34 @@ if arquivo_dicom is not None:
             if len(detectados_na_coluna) > 0:
                 prof_limite = dimensoes[np.min(detectados_na_coluna)]
                 iqf += dimensoes[j] * prof_limite
+                # Guardando os dados para o gráfico
                 profundidades_grafico.append(prof_limite)
                 diametros_grafico.append(dimensoes[j])
         
-        # --- CÁLCULO DO IQF INVERSO ---
-        # Evitando divisão por zero caso nenhum quadrado seja detectado
         iqf_inv = (100 / iqf) if iqf > 0 else 0
         
         col_iqf1, col_iqf2 = st.columns(2)
         with col_iqf1:
-            st.metric("IQF", f"{iqf:.2f}")
-            st.caption("↓ Menor é melhor")
+            st.metric("IQF Padrão", f"{iqf:.2f}")
         with col_iqf2:
             st.metric("IQF Inverso", f"{iqf_inv:.2f}")
-            st.caption("↑ Maior é melhor")
         
         st.divider()
         
+        # --- ATUALIZAÇÃO 1.12: GRÁFICO IDÊNTICO AO CDCOM ---
         st.write("**Curva Contraste-Detalhe (C-D)**")
         fig_grafico, ax_grafico = plt.subplots(figsize=(6, 4))
-        ax_grafico.plot(diametros_grafico, profundidades_grafico, marker='o', linestyle='-', color='#1f77b4', linewidth=2)
-        ax_grafico.set_xlabel("Diâmetro do Furo (mm)")
-        ax_grafico.set_ylabel("Profundidade Limiar (mm)")
+        
+        # INVERTENDO OS EIXOS: Agora X = Profundidade e Y = Diâmetro
+        ax_grafico.plot(profundidades_grafico, diametros_grafico, marker='o', linestyle='-', color='#1f77b4', linewidth=2)
+        
+        ax_grafico.set_xlabel("Profundidade / Contraste (mm)")
+        ax_grafico.set_ylabel("Diâmetro / Resolução (mm)")
+        
+        # Opcional: Forçar a escala do gráfico para mostrar os limites de 0.3 a 8.0, 
+        # para ficar com o mesmo "aspecto quadrado" da sua imagem.
+        ax_grafico.set_xlim(0, 8.5)
+        ax_grafico.set_ylim(0, 8.5)
         ax_grafico.grid(True, linestyle='--', alpha=0.7)
+        
         st.pyplot(fig_grafico)
