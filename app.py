@@ -27,7 +27,7 @@ modo_telecomandado = st.sidebar.checkbox("☢️ Modo Telecomandado / Fluoroscop
 st.sidebar.caption("Ative se a imagem tiver bordas hexagonais ou distorção circular para ignorar zonas mortas.")
 
 st.sidebar.subheader("3. Sensibilidade")
-sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 40, 15)
+sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 40, 18) # Aumentado ligeiramente o padrão para maior robustez
 
 arquivo_dicom = st.file_uploader("Faça o upload da imagem DICOM do CDRAD (.dcm)", type=["dcm"])
 
@@ -86,7 +86,8 @@ if arquivo_dicom is not None:
                     ignorado = False
                     
                     if modo_telecomandado:
-                        if std_cel > 60 or media_cel < 30 or media_cel > 220:
+                        # Filtro estrito para artefatos de colimação hexagonal nas bordas
+                        if std_cel > 55 or media_cel < 35 or media_cel > 225:
                             ignorado = True
                         elif std_cel > sensibilidade:
                             detectado = True
@@ -111,25 +112,36 @@ if arquivo_dicom is not None:
     with col2:
         st.subheader("📊 Métricas e Curva C-D")
         
-        # --- CÁLCULO E RETORNO DAS MÉTRICAS SOLICITADAS ---
-        indices_detectados = np.where(matriz_deteccao == 1)
-        if len(indices_detectados[0]) > 0:
-            # O menor diâmetro visível corresponde ao maior índice de linha encontrado
-            menor_dia = diametros_y[np.max(indices_detectados[0])] 
-            # A menor profundidade visível corresponde ao menor índice de coluna encontrado
-            menor_prof = profundidades_x[np.min(indices_detectados[1])] 
-        else:
-            menor_dia, menor_prof = 0.0, 0.0
+        # --- NOVA LÓGICA FILTRADA E ROBUSTA DE MÉTRICAS ---
+        menor_dia = 0.0
+        menor_prof = 0.0
+        
+        # 1. Resolução Espacial (Diâmetro): Encontra a última linha (de cima para baixo) que possui validação consistente
+        # Uma linha válida deve ter furos detectados e não pode ser apenas um ruído isolado nas bordas pretas
+        linhas_validas = []
+        for i in range(15):
+            if np.sum(matriz_deteccao[i, :]) >= 2: # Exige pelo menos 2 furos detectados na mesma linha para validá-la
+                linhas_validas.append(i)
+        if len(linhas_validas) > 0:
+            menor_dia = diametros_y[np.max(linhas_validas)]
+            
+        # 2. Baixo Contraste (Profundidade): Encontra a coluna mais à esquerda com detecção consistente
+        colunas_validas = []
+        for j in range(15):
+            if np.sum(matriz_deteccao[:, j]) >= 2: # Exige pelo menos 2 furos detectados na mesma coluna
+                colunas_validas.append(j)
+        if len(colunas_validas) > 0:
+            menor_prof = profundidades_x[np.min(colunas_validas)]
 
         met_res_esp, met_threshold = st.columns(2)
         with met_res_esp:
-            st.metric("Res. Espacial (Diâmetro)", f"{menor_dia} mm" if menor_dia > 0 else "Nenhum")
+            st.metric("Res. Espacial (Diâmetro)", f"{menor_dia} mm" if menor_dia > 0 else "Não Detectado")
         with met_threshold:
-            st.metric("Baixo Contraste (Prof.)", f"{menor_prof} mm" if menor_prof > 0 else "Nenhum")
+            st.metric("Baixo Contraste (Prof.)", f"{menor_prof} mm" if menor_prof > 0 else "Não Detectado")
         
         st.divider()
         
-        # --- CÁLCULO DO IQF E PREPARAÇÃO DO GRÁFICO ---
+        # --- CÁLCULO DO IQF E CURVA C-D ---
         iqf = 0
         profundidades_grafico = [] 
         diametros_grafico = []     
@@ -156,7 +168,6 @@ if arquivo_dicom is not None:
         st.caption(f"ℹ️ Total de Quadrados Válidos Detectados: {contagem_vistos} / 225")
         st.divider()
         
-        # --- GRÁFICO C-D ---
         st.write("**Curva Contraste-Detalhe (C-D)**")
         fig_grafico, ax_grafico = plt.subplots(figsize=(6, 4))
         
