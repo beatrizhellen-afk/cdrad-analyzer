@@ -1,6 +1,7 @@
 import streamlit as st
 import pydicom
 import numpy as np
+import matplotlib.pyplot as plt
 
 # Título do seu software
 st.title("CDRAD Analyzer Pro ⚛️")
@@ -15,16 +16,29 @@ if arquivo_dicom is not None:
     # Lendo o arquivo com pydicom
     dcm = pydicom.dcmread(arquivo_dicom)
     
-    # Extraindo algumas informações para mostrar na tela
-    st.subheader("Metadados da Imagem")
-    st.write(f"**Equipamento:** {dcm.get('Manufacturer', 'Desconhecido')}")
-    st.write(f"**kVp utilizado:** {dcm.get('KVP', 'Não informado')} kV")
-    st.write(f"**mAs utilizado:** {dcm.get('Exposure', 'Não informado')} mAs")
+    # Extraindo metadados ajustados
+    st.subheader("Informações Básicas")
+    st.write(f"**Equipamento (Fabricante):** {dcm.get('Manufacturer', 'Desconhecido')}")
     
-    # Extraindo a matriz de pixels (A imagem bruta)
+    # Extraindo a matriz de pixels
     imagem_matriz = dcm.pixel_array
     
-    # Mostrando a resolução
-    st.write(f"**Resolução da Matriz:** {imagem_matriz.shape}")
+    # Mostrando a resolução de forma mais amigável
+    linhas, colunas = imagem_matriz.shape
+    st.write(f"**Resolução da Imagem:** {colunas} x {linhas} pixels")
     
-    st.info("Aqui entrará o seu algoritmo de detecção da grade e cálculo do IQF!")
+    # --- NOVA FUNCIONALIDADE: MOSTRAR A IMAGEM ---
+    st.subheader("Visualização do Fantoma")
+    
+    # Criando a figura com fundo escuro padrão de raio-x
+    fig, ax = plt.subplots(figsize=(8, 8))
+    # cmap='gray' garante que a imagem fique em preto e branco como no hospital
+    ax.imshow(imagem_matriz, cmap='gray') 
+    ax.axis('off') # Remove as bordas e numerações do gráfico para ficar limpo
+    
+    # Mostrando a imagem no Streamlit
+    st.pyplot(fig)
+    
+    # ---------------------------------------------
+    
+    st.info("Próximo passo: Iniciar a detecção matemática da grade do CDRAD e cálculo do IQF!")
