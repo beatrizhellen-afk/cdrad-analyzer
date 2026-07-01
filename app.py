@@ -2,6 +2,7 @@ import streamlit as st
 import pydicom
 import numpy as np
 import matplotlib.pyplot as plt
+import cv2
 
 # Título do seu software
 st.title("CDRAD Analyzer Pro ⚛️")
@@ -16,29 +17,45 @@ if arquivo_dicom is not None:
     # Lendo o arquivo com pydicom
     dcm = pydicom.dcmread(arquivo_dicom)
     
-    # Extraindo metadados ajustados
     st.subheader("Informações Básicas")
     st.write(f"**Equipamento (Fabricante):** {dcm.get('Manufacturer', 'Desconhecido')}")
     
-    # Extraindo a matriz de pixels
-    imagem_matriz = dcm.pixel_array
-    
-    # Mostrando a resolução de forma mais amigável
-    linhas, colunas = imagem_matriz.shape
+    # Extraindo a matriz de pixels e convertendo para o formato correto do OpenCV
+    imagem_bruta = dcm.pixel_array
+    linhas, colunas = imagem_bruta.shape
     st.write(f"**Resolução da Imagem:** {colunas} x {linhas} pixels")
     
-    # --- NOVA FUNCIONALIDADE: MOSTRAR A IMAGEM ---
-    st.subheader("Visualização do Fantoma")
+    # Normalizando a imagem para 8 bits (0-255) para os filtros funcionarem
+    imagem_norm = cv2.normalize(imagem_bruta, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     
-    # Criando a figura com fundo escuro padrão de raio-x
-    fig, ax = plt.subplots(figsize=(8, 8))
-    # cmap='gray' garante que a imagem fique em preto e branco como no hospital
-    ax.imshow(imagem_matriz, cmap='gray') 
-    ax.axis('off') # Remove as bordas e numerações do gráfico para ficar limpo
+    st.markdown("---")
+    st.subheader("Processamento de Imagem (Visão Computacional)")
     
-    # Mostrando a imagem no Streamlit
+    # Criando um menu para escolher o filtro
+    filtro = st.radio(
+        "Escolha o modo de visualização:",
+        ("Imagem Original", "Realce de Contraste Máximo (CLAHE)", "Detecção de Bordas (Canny)")
+    )
+    
+    # Aplicando o filtro escolhido
+    if filtro == "Imagem Original":
+        imagem_processada = imagem_norm
+        
+    elif filtro == "Realce de Contraste Máximo (CLAHE)":
+        # O CLAHE equaliza o histograma em pequenos blocos, revelando furos ocultos
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        imagem_processada = clahe.apply(imagem_norm)
+        
+    elif filtro == "Detecção de Bordas (Canny)":
+        # O Canny desenha as linhas de contorno (ótimo para ver a grade do CDRAD)
+        # Primeiro damos um leve desfoque para reduzir o ruído
+        suave = cv2.GaussianBlur(imagem_norm, (5, 5), 0)
+        imagem_processada = cv2.Canny(suave, 30, 100)
+    
+    # Renderizando a imagem na tela
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(imagem_processada, cmap='gray')
+    ax.axis('off')
     st.pyplot(fig)
     
-    # ---------------------------------------------
-    
-    st.info("Próximo passo: Iniciar a detecção matemática da grade do CDRAD e cálculo do IQF!")
+    st.info("Próximo passo: Segmentar a imagem e extrair a matriz 15x15 do CDRAD!")
