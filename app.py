@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import cv2
 from PIL import Image
 from streamlit_cropper import st_cropper
+from datetime import datetime
 
 st.set_page_config(page_title="CDRAD Analyzer Pro", layout="wide")
 
@@ -27,7 +28,7 @@ modo_telecomandado = st.sidebar.checkbox("☢️ Modo Telecomandado / Fluoroscop
 st.sidebar.caption("Ative se a imagem tiver bordas hexagonais ou distorção circular para ignorar zonas mortas.")
 
 st.sidebar.subheader("3. Sensibilidade")
-sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 40, 18) # Aumentado ligeiramente o padrão para maior robustez
+sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 40, 20) # Aumentado o padrão para maior robustez no telecomandado
 
 arquivo_dicom = st.file_uploader("Faça o upload da imagem DICOM do CDRAD (.dcm)", type=["dcm"])
 
@@ -39,16 +40,18 @@ if arquivo_dicom is not None:
     if espelhar_v: imagem_bruta = np.flipud(imagem_bruta)
     
     imagem_norm = cv2.normalize(imagem_bruta, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    h_orig, w_orig = imagem_norm.shape
+    centro_img = (w_orig // 2, h_orig // 2)
     
     if angulo_rotacao != 0.0:
-        h_orig, w_orig = imagem_norm.shape
-        M = cv2.getRotationMatrix2D((w_orig // 2, h_orig // 2), angulo_rotacao, 1.0)
+        M = cv2.getRotationMatrix2D(centro_img, angulo_rotacao, 1.0)
         imagem_processada = cv2.warpAffine(imagem_norm, M, (w_orig, h_orig), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
     else:
         imagem_processada = imagem_norm.copy()
 
     st.markdown("---")
     st.subheader("✂️ Recorte Interativo da Matriz (ROI)")
+    st.write("Desenhe o quadrado azul exatamente sobre a área dos furos do fantoma. No modo telecomandado, tudo bem se as bordas pretas entrarem um pouco no quadrado.")
     
     img_pil = Image.fromarray(imagem_processada)
     imagem_recortada_pil = st_cropper(img_pil, realtime_update=True, box_color='#0000FF', aspect_ratio=(1, 1))
@@ -96,6 +99,7 @@ if arquivo_dicom is not None:
                             detectado = True
 
                     if ignorado:
+                        # Pinta de azul com um X se for zona morta do telecomandado
                         ax_img.add_patch(plt.Rectangle((x, y), cell_w, cell_h, linewidth=1, edgecolor='b', facecolor='none', alpha=0.3))
                         ax_img.plot([x, x+cell_w], [y, y+cell_h], color='b', alpha=0.5, linewidth=1)
                         ax_img.plot([x+cell_w, x], [y, y+cell_h], color='b', alpha=0.5, linewidth=1)
@@ -112,36 +116,36 @@ if arquivo_dicom is not None:
     with col2:
         st.subheader("📊 Métricas e Curva C-D")
         
-        # --- NOVA LÓGICA FILTRADA E ROBUSTA DE MÉTRICAS ---
-        menor_dia = 0.0
-        menor_prof = 0.0
+        # --- ATUALIZAÇÃO 1.17: LÓGICA FILTRADA E ROBUSTA DE MÉTRICAS ---
+        menor_dia_real = 0.0
+        melhor_prof_real = 0.0
         
-        # 1. Resolução Espacial (Diâmetro): Encontra a última linha (de cima para baixo) que possui validação consistente
-        # Uma linha válida deve ter furos detectados e não pode ser apenas um ruído isolado nas bordas pretas
+        # 1. Resolução Espacial (Detalhe): Encontra a linha com detecção consistente que tem o MENOR diâmetro real
         linhas_validas = []
         for i in range(15):
-            if np.sum(matriz_deteccao[i, :]) >= 2: # Exige pelo menos 2 furos detectados na mesma linha para validá-la
+            if np.sum(matriz_deteccao[i, :]) >= 2: # Exige pelo menos 2 furos detectados na mesma linha
                 linhas_validas.append(i)
         if len(linhas_validas) > 0:
-            menor_dia = diametros_y[np.max(linhas_validas)]
+            menor_dia_real = diametros_y[np.min(linhas_validas)] # Pega o MENOR índice de linha (melhor resolução real e consistente)
             
-        # 2. Baixo Contraste (Profundidade): Encontra a coluna mais à esquerda com detecção consistente
+        # 2. Baixo Contraste (Profundidade): Encontra a coluna com detecção consistente que tem a MELHOR profundidade real (mais rasa)
         colunas_validas = []
         for j in range(15):
             if np.sum(matriz_deteccao[:, j]) >= 2: # Exige pelo menos 2 furos detectados na mesma coluna
                 colunas_validas.append(j)
         if len(colunas_validas) > 0:
-            menor_prof = profundidades_x[np.min(colunas_validas)]
+            melhor_prof_real = profundidades_x[np.max(colunas_validas)] # Pega o MAIOR índice de coluna (melhor contraste real e consistente)
 
         met_res_esp, met_threshold = st.columns(2)
         with met_res_esp:
-            st.metric("Res. Espacial (Diâmetro)", f"{menor_dia} mm" if menor_dia > 0 else "Não Detectado")
+            st.metric("Res. Espacial (Diâmetro)", f"{menor_dia_real} mm" if menor_dia_real > 0 else "Não Detectado")
         with met_threshold:
-            st.metric("Baixo Contraste (Prof.)", f"{menor_prof} mm" if menor_prof > 0 else "Não Detectado")
+            st.metric("Baixo Contraste (Prof.)", f"{melhor_prof_real} mm" if melhor_prof_real > 0 else "Não Detectado")
         
+        st.metric("Quadrados Válidos Detectados", f"{contagem_vistos} / 225")
         st.divider()
         
-        # --- CÁLCULO DO IQF E CURVA C-D ---
+        # --- ATUALIZAÇÃO 1.17: CÁLCULO DO IQF E CURVA C-D CORRETOS ---
         iqf = 0
         profundidades_grafico = [] 
         diametros_grafico = []     
@@ -149,11 +153,13 @@ if arquivo_dicom is not None:
         for i in range(15):
             detectados_na_linha = np.where(matriz_deteccao[i, :] == 1)[0]
             if len(detectados_na_linha) > 0:
-                menor_j = np.min(detectados_na_linha) 
-                prof_limite = profundidades_x[menor_j]
+                # O cálculo correto: Para cada linha (Diâmetro fixo), procura a MELHOR coluna (Profundidade) detectada
+                maior_j = np.max(detectados_na_linha) # Índice da maior profundidade (melhor contraste) detectada na linha
+                prof_limite = profundidades_x[maior_j]
                 diam_atual = diametros_y[i]
                 
                 iqf += diam_atual * prof_limite
+                # Guardando os dados para o gráfico
                 profundidades_grafico.append(prof_limite)
                 diametros_grafico.append(diam_atual)
         
@@ -162,22 +168,28 @@ if arquivo_dicom is not None:
         col_iqf1, col_iqf2 = st.columns(2)
         with col_iqf1:
             st.metric("IQF Padrão", f"{iqf:.2f}")
+            st.caption("↓ Menor é melhor")
         with col_iqf2:
             st.metric("IQF Inverso", f"{iqf_inv:.2f}")
+            st.caption("↑ Maior é melhor")
         
-        st.caption(f"ℹ️ Total de Quadrados Válidos Detectados: {contagem_vistos} / 225")
         st.divider()
         
+        # --- GRÁFICO C-D ---
         st.write("**Curva Contraste-Detalhe (C-D)**")
         fig_grafico, ax_grafico = plt.subplots(figsize=(6, 4))
         
+        # Plotando a linha com marcadores
         if len(diametros_grafico) > 0:
+            # Ordenando os dados para a curva não fazer zigue-zague
             dados_ordenados = sorted(zip(profundidades_grafico, diametros_grafico))
             prof_plot, diam_plot = zip(*dados_ordenados)
             ax_grafico.plot(prof_plot, diam_plot, marker='o', linestyle='-', color='#1f77b4', linewidth=2)
         
         ax_grafico.set_xlabel("Profundidade / Contraste (mm)")
         ax_grafico.set_ylabel("Diâmetro / Resolução (mm)")
+        
+        # Forçar a escala do gráfico para mostrar os limites de 0.3 a 8.0
         ax_grafico.set_xlim(0, 8.5)
         ax_grafico.set_ylim(0, 8.5)
         ax_grafico.grid(True, linestyle='--', alpha=0.7)
