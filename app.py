@@ -11,7 +11,8 @@ st.set_page_config(page_title="CDRAD Analyzer Pro", layout="wide")
 st.title("CDRAD Analyzer Pro ⚛️")
 st.write("Software de análise automatizada do fantoma CDRAD para otimização de doses.")
 
-dimensoes = [0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.3, 1.6, 2.0, 2.5, 3.2, 4.0, 5.0, 6.3, 8.0]
+diametros_y = [8.0, 6.3, 5.0, 4.0, 3.2, 2.5, 2.0, 1.6, 1.3, 1.0, 0.8, 0.6, 0.5, 0.4, 0.3] 
+profundidades_x = [0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.3, 1.6, 2.0, 2.5, 3.2, 4.0, 5.0, 6.3, 8.0] 
 
 # --- MENU LATERAL ---
 st.sidebar.header("🔧 Controles da Imagem")
@@ -20,8 +21,13 @@ espelhar_h = st.sidebar.checkbox("↔️ Espelhar Horizontalmente")
 espelhar_v = st.sidebar.checkbox("↕️ Espelhar Verticalmente")
 angulo_rotacao = st.sidebar.number_input("🔄 Alinhamento Fino (Graus)", min_value=-180.0, max_value=180.0, value=0.0, step=0.1, format="%.1f")
 
-st.sidebar.subheader("2. Sensibilidade")
-sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 30, 12)
+# --- NOVO: MODO TELECOMANDADO ---
+st.sidebar.subheader("2. Perfil do Equipamento")
+modo_telecomandado = st.sidebar.checkbox("☢️ Modo Telecomandado / Fluoroscopia")
+st.sidebar.caption("Ative se a imagem tiver bordas hexagonais ou distorção circular para ignorar zonas mortas.")
+
+st.sidebar.subheader("3. Sensibilidade")
+sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 40, 15)
 
 arquivo_dicom = st.file_uploader("Faça o upload da imagem DICOM do CDRAD (.dcm)", type=["dcm"])
 
@@ -43,6 +49,7 @@ if arquivo_dicom is not None:
 
     st.markdown("---")
     st.subheader("✂️ Recorte Interativo da Matriz (ROI)")
+    st.warning("Recorte apenas a área da grade. No modo telecomandado, tudo bem se as bordas pretas entrarem um pouco no quadrado, o software tentará ignorá-las.")
     
     img_pil = Image.fromarray(imagem_processada)
     imagem_recortada_pil = st_cropper(img_pil, realtime_update=True, box_color='#0000FF', aspect_ratio=(1, 1))
@@ -67,46 +74,64 @@ if arquivo_dicom is not None:
         for i in range(15): 
             for j in range(15): 
                 y, x = i * cell_h, j * cell_w
-                roi_celula = imagem_roi[y:y+cell_h, x:x+cell_w]
-                if np.std(roi_celula) > sensibilidade: 
-                    matriz_deteccao[i, j] = 1
-                    contagem_vistos += 1
-                    ax_img.add_patch(plt.Rectangle((x, y), cell_w, cell_h, linewidth=1, edgecolor='g', facecolor='none', alpha=0.5))
-                else:
-                    ax_img.add_patch(plt.Rectangle((x, y), cell_w, cell_h, linewidth=1, edgecolor='r', facecolor='none', alpha=0.2))
+                
+                margem_y = int(cell_h * 0.2)
+                margem_x = int(cell_w * 0.2)
+                roi_celula = imagem_roi[y+margem_y : y+cell_h-margem_y, x+margem_x : x+cell_w-margem_x]
+                
+                if roi_celula.size > 0:
+                    std_cel = np.std(roi_celula)
+                    media_cel = np.mean(roi_celula)
+                    
+                    # Lógica de detecção
+                    detectado = False
+                    ignorado = False
+                    
+                    if modo_telecomandado:
+                        # Se o desvio padrão for absurdo (> 60) ou a média for muito escura/clara, é a borda do colimador
+                        if std_cel > 60 or media_cel < 30 or media_cel > 220:
+                            ignorado = True
+                        elif std_cel > sensibilidade:
+                            detectado = True
+                    else:
+                        if std_cel > sensibilidade:
+                            detectado = True
+
+                    # Desenhando os resultados
+                    if ignorado:
+                        # Pinta de azul com um X se for zona morta do telecomandado
+                        ax_img.add_patch(plt.Rectangle((x, y), cell_w, cell_h, linewidth=1, edgecolor='b', facecolor='none', alpha=0.3))
+                        ax_img.plot([x, x+cell_w], [y, y+cell_h], color='b', alpha=0.5, linewidth=1)
+                        ax_img.plot([x+cell_w, x], [y, y+cell_h], color='b', alpha=0.5, linewidth=1)
+                    elif detectado:
+                        matriz_deteccao[i, j] = 1
+                        contagem_vistos += 1
+                        ax_img.add_patch(plt.Rectangle((x, y), cell_w, cell_h, linewidth=1, edgecolor='g', facecolor='none', alpha=0.5))
+                    else:
+                        ax_img.add_patch(plt.Rectangle((x, y), cell_w, cell_h, linewidth=1, edgecolor='r', facecolor='none', alpha=0.2))
+                        
         ax_img.axis('off')
         st.pyplot(fig_img)
 
     with col2:
         st.subheader("📊 Métricas e Curva C-D")
-        
-        indices_detectados = np.where(matriz_deteccao == 1)
-        if len(indices_detectados[1]) > 0:
-            menor_dia = dimensoes[np.min(indices_detectados[1])] 
-            menor_prof = dimensoes[np.min(indices_detectados[0])] 
-        else:
-            menor_dia, menor_prof = 0, 0
-
-        met_res_esp, met_threshold = st.columns(2)
-        with met_res_esp:
-            st.metric("Res. Espacial (Diâmetro)", f"{menor_dia} mm")
-        with met_threshold:
-            st.metric("Baixo Contraste (Prof.)", f"{menor_prof} mm")
-        
+        st.metric("Quadrados Detectados (Válidos)", f"{contagem_vistos}")
         st.divider()
         
         iqf = 0
         profundidades_grafico = [] 
         diametros_grafico = []     
         
-        for j in range(15):
-            detectados_na_coluna = np.where(matriz_deteccao[:, j] == 1)[0]
-            if len(detectados_na_coluna) > 0:
-                prof_limite = dimensoes[np.min(detectados_na_coluna)]
-                iqf += dimensoes[j] * prof_limite
-                # Guardando os dados para o gráfico
+        for i in range(15):
+            detectados_na_linha = np.where(matriz_deteccao[i, :] == 1)[0]
+            if len(detectados_na_linha) > 0:
+                menor_j = np.min(detectados_na_linha) 
+                prof_limite = profundidades_x[menor_j]
+                diam_atual = diametros_y[i]
+                
+                iqf += diam_atual * prof_limite
                 profundidades_grafico.append(prof_limite)
-                diametros_grafico.append(dimensoes[j])
+                diametros_grafico.append(diam_atual)
         
         iqf_inv = (100 / iqf) if iqf > 0 else 0
         
@@ -118,18 +143,16 @@ if arquivo_dicom is not None:
         
         st.divider()
         
-        # --- ATUALIZAÇÃO 1.12: GRÁFICO IDÊNTICO AO CDCOM ---
         st.write("**Curva Contraste-Detalhe (C-D)**")
         fig_grafico, ax_grafico = plt.subplots(figsize=(6, 4))
         
-        # INVERTENDO OS EIXOS: Agora X = Profundidade e Y = Diâmetro
-        ax_grafico.plot(profundidades_grafico, diametros_grafico, marker='o', linestyle='-', color='#1f77b4', linewidth=2)
+        if len(diametros_grafico) > 0:
+            dados_ordenados = sorted(zip(profundidades_grafico, diametros_grafico))
+            prof_plot, diam_plot = zip(*dados_ordenados)
+            ax_grafico.plot(prof_plot, diam_plot, marker='o', linestyle='-', color='#1f77b4', linewidth=2)
         
         ax_grafico.set_xlabel("Profundidade / Contraste (mm)")
         ax_grafico.set_ylabel("Diâmetro / Resolução (mm)")
-        
-        # Opcional: Forçar a escala do gráfico para mostrar os limites de 0.3 a 8.0, 
-        # para ficar com o mesmo "aspecto quadrado" da sua imagem.
         ax_grafico.set_xlim(0, 8.5)
         ax_grafico.set_ylim(0, 8.5)
         ax_grafico.grid(True, linestyle='--', alpha=0.7)
