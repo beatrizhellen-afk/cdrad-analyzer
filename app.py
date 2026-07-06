@@ -157,8 +157,8 @@ if arquivo_dicom is not None:
             soma_linha = np.sum(matriz_deteccao[i, :])
             
             # Só calcula o ponto se a linha não for um artefato saturado
-            if len(detectados_na_linha) > 0 and iframe_soma := soma_linha < 14:
-                menor_j = np.min(detectados_na_linha) 
+            if len(detectados_na_linha) > 0 and soma_linha < 14:
+            menor_j = np.min(detectados_na_linha) 
                 prof_limite = profundidades_x[menor_j]
                 diam_atual = diametros_y[i]
                 
