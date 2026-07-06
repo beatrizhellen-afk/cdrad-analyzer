@@ -27,7 +27,7 @@ modo_telecomandado = st.sidebar.checkbox("☢️ Modo Telecomandado / Fluoroscop
 st.sidebar.caption("Ative se a imagem tiver bordas hexagonais ou distorção circular para ignorar zonas mortas.")
 
 st.sidebar.subheader("3. Sensibilidade")
-sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 40, 16) # Baixado ligeiramente para pegar furos reais mais sutis
+sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 40, 16) 
 
 arquivo_dicom = st.file_uploader("Faça o upload da imagem DICOM do CDRAD (.dcm)", type=["dcm"])
 
@@ -113,26 +113,22 @@ if arquivo_dicom is not None:
     with col2:
         st.subheader("📊 Métricas e Curva C-D")
         
-        # --- ATUALIZAÇÃO v1.19: LÓGICA ULTRA ROBUSTA BASEADA EM GEOMETRIA DE FÍSICA MÉDICA ---
         menor_dia_real = 0.0
         limiar_baixo_contraste = 0.0
         
-        # 1. Resolução Espacial: Procuramos o menor diâmetro (maior índice i) com sinal nas colunas de alto contraste (colunas 10 a 14)
-        # Filtramos linhas com preenchimento fantasma de ruído (soma_linha == 15 costuma ser artefato de borda)
         linhas_com_sinal = []
         for i in range(15):
             soma_linha = np.sum(matriz_deteccao[i, :])
-            if 1 <= soma_linha < 14: # Descarta linhas vazias ou linhas saturadas por artefatos de borda
+            if 1 <= soma_linha < 14: 
                 if np.any(matriz_deteccao[i, 10:] == 1):
                     linhas_com_sinal.append(i)
         if len(linhas_com_sinal) > 0:
             menor_dia_real = diametros_y[np.max(linhas_com_sinal)]
             
-        # 2. Baixo Contraste: Procuramos a menor profundidade (menor índice j) com sinal nas linhas de furos grandes (linhas 0 a 4)
         colunas_com_sinal = []
         for j in range(15):
             soma_coluna = np.sum(matriz_deteccao[:, j])
-            if 1 <= soma_coluna < 14: # Descarta colunas saturadas por artefatos
+            if 1 <= soma_coluna < 14: 
                 if np.any(matriz_deteccao[:5, j] == 1):
                     colunas_com_sinal.append(j)
         if len(colunas_com_sinal) > 0:
@@ -147,7 +143,6 @@ if arquivo_dicom is not None:
         st.metric("Quadrados Válidos Detectados", f"{contagem_vistos} / 225")
         st.divider()
         
-        # --- CÁLCULO DO IQF E CURVA C-D CORRETOS ---
         iqf = 0
         profundidades_grafico = [] 
         diametros_grafico = []     
@@ -156,9 +151,9 @@ if arquivo_dicom is not None:
             detectados_na_linha = np.where(matriz_deteccao[i, :] == 1)[0]
             soma_linha = np.sum(matriz_deteccao[i, :])
             
-            # Só calcula o ponto se a linha não for um artefato saturado
+            # --- Correção Aplicada Aqui 👇 ---
             if len(detectados_na_linha) > 0 and soma_linha < 14:
-            menor_j = np.min(detectados_na_linha) 
+                menor_j = np.min(detectados_na_linha) 
                 prof_limite = profundidades_x[menor_j]
                 diam_atual = diametros_y[i]
                 
