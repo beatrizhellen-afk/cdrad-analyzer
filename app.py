@@ -27,7 +27,7 @@ modo_telecomandado = st.sidebar.checkbox("☢️ Modo Telecomandado / Fluoroscop
 st.sidebar.caption("Ative se a imagem tiver bordas hexagonais ou distorção circular para ignorar zonas mortas.")
 
 st.sidebar.subheader("3. Sensibilidade")
-sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 40, 16) 
+sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 40, 18) 
 
 arquivo_dicom = st.file_uploader("Faça o upload da imagem DICOM do CDRAD (.dcm)", type=["dcm"])
 
@@ -50,7 +50,7 @@ if arquivo_dicom is not None:
 
     st.markdown("---")
     st.subheader("✂️ Recorte Interativo da Matriz (ROI)")
-    st.info("💡 **DICA DE OURO:** Ajuste o quadrado azul para ficar **estritamente dentro** da grade de furos. Evite ao máximo que as linhas brancas externas do fantoma ou as bordas pretas da colimação entrem no recorte.")
+    st.info("💡 **DICA DE OURO:** Ajuste o quadrado azul para ficar **estritamente dentro** da grade de furos. Tente ao máximo deixar as linhas brancas externas e as bordas de colimação pretas de fora do recorte.")
     
     img_pil = Image.fromarray(imagem_processada)
     imagem_recortada_pil = st_cropper(img_pil, realtime_update=True, box_color='#0000FF', aspect_ratio=(1, 1))
@@ -76,19 +76,21 @@ if arquivo_dicom is not None:
             for j in range(15): 
                 y, x = i * cell_h, j * cell_w
                 
-                margem_y = int(cell_h * 0.2)
-                margem_x = int(cell_w * 0.2)
-                roi_celula = imagem_roi[y+margem_y : y+cell_h-margem_y, x+margem_x : x+cell_w-margem_x]
+                # --- ATUALIZAÇÃO 1.19.2: IMPLEMENTAÇÃO DE MARGEM DE SEGURANÇA NA CÉLULA ---
+                # Ignoramos 20% da borda de cada quadradinho para não ler a linha branca da grade
+                margem_y = int(cell_h * 0.20)
+                margem_x = int(cell_w * 0.20)
+                roi_celula_miolo = imagem_roi[y+margem_y : y+cell_h-margem_y, x+margem_x : x+cell_w-margem_x]
                 
-                if roi_celula.size > 0:
-                    std_cel = np.std(roi_celula)
-                    media_cel = np.mean(roi_celula)
+                if roi_celula_miolo.size > 0:
+                    std_cel = np.std(roi_celula_miolo)
+                    media_cel = np.mean(roi_celula_miolo)
                     
                     detectado = False
                     ignorado = False
                     
                     if modo_telecomandado:
-                        if std_cel > 55 or media_cel < 35 or media_cel > 225:
+                        if std_cel > 55 or media_cel < 35 or media_cel > 220:
                             ignorado = True
                         elif std_cel > sensibilidade:
                             detectado = True
@@ -97,6 +99,7 @@ if arquivo_dicom is not None:
                             detectado = True
 
                     if ignorado:
+                        # Pinta de azul com um X se for zona morta do telecomandado
                         ax_img.add_patch(plt.Rectangle((x, y), cell_w, cell_h, linewidth=1, edgecolor='b', facecolor='none', alpha=0.3))
                         ax_img.plot([x, x+cell_w], [y, y+cell_h], color='b', alpha=0.5, linewidth=1)
                         ax_img.plot([x+cell_w, x], [y, y+cell_h], color='b', alpha=0.5, linewidth=1)
@@ -116,15 +119,17 @@ if arquivo_dicom is not None:
         menor_dia_real = 0.0
         limiar_baixo_contraste = 0.0
         
+        # 1. Resolução Espacial: Procuramos o menor diâmetro (maior índice i) com sinal coerente nas colunas de alto contraste
         linhas_com_sinal = []
         for i in range(15):
             soma_linha = np.sum(matriz_deteccao[i, :])
-            if 1 <= soma_linha < 14: 
+            if 1 <= soma_linha < 14: # Descarta artefatos saturados
                 if np.any(matriz_deteccao[i, 10:] == 1):
                     linhas_com_sinal.append(i)
         if len(linhas_com_sinal) > 0:
             menor_dia_real = diametros_y[np.max(linhas_com_sinal)]
             
+        # 2. Baixo Contraste: Procuramos a menor profundidade (menor índice j) coerente nas linhas de furos grandes
         colunas_com_sinal = []
         for j in range(15):
             soma_coluna = np.sum(matriz_deteccao[:, j])
@@ -143,6 +148,7 @@ if arquivo_dicom is not None:
         st.metric("Quadrados Válidos Detectados", f"{contagem_vistos} / 225")
         st.divider()
         
+        # --- CÁLCULO DO IQF E CURVA C-D ---
         iqf = 0
         profundidades_grafico = [] 
         diametros_grafico = []     
@@ -151,7 +157,7 @@ if arquivo_dicom is not None:
             detectados_na_linha = np.where(matriz_deteccao[i, :] == 1)[0]
             soma_linha = np.sum(matriz_deteccao[i, :])
             
-            # --- Correção Aplicada Aqui 👇 ---
+            # Só calcula o ponto se a linha não for um artefato saturado
             if len(detectados_na_linha) > 0 and soma_linha < 14:
                 menor_j = np.min(detectados_na_linha) 
                 prof_limite = profundidades_x[menor_j]
