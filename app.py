@@ -27,7 +27,7 @@ modo_telecomandado = st.sidebar.checkbox("☢️ Modo Telecomandado / Fluoroscop
 st.sidebar.caption("Ative se a imagem tiver bordas hexagonais ou distorção circular para ignorar zonas mortas.")
 
 st.sidebar.subheader("3. Sensibilidade")
-sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 40, 20)
+sensibilidade = st.sidebar.slider("Limiar de Detecção (Ruído)", 5, 40, 16) # Baixado ligeiramente para pegar furos reais mais sutis
 
 arquivo_dicom = st.file_uploader("Faça o upload da imagem DICOM do CDRAD (.dcm)", type=["dcm"])
 
@@ -50,7 +50,7 @@ if arquivo_dicom is not None:
 
     st.markdown("---")
     st.subheader("✂️ Recorte Interativo da Matriz (ROI)")
-    st.write("Desenhe o quadrado azul exatamente sobre a área dos furos do fantoma.")
+    st.info("💡 **DICA DE OURO:** Ajuste o quadrado azul para ficar **estritamente dentro** da grade de furos. Evite ao máximo que as linhas brancas externas do fantoma ou as bordas pretas da colimação entrem no recorte.")
     
     img_pil = Image.fromarray(imagem_processada)
     imagem_recortada_pil = st_cropper(img_pil, realtime_update=True, box_color='#0000FF', aspect_ratio=(1, 1))
@@ -113,25 +113,30 @@ if arquivo_dicom is not None:
     with col2:
         st.subheader("📊 Métricas e Curva C-D")
         
-        # --- ATUALIZAÇÃO CORRETA E DEFINITIVA DAS MÉTRICAS (v1.18) ---
+        # --- ATUALIZAÇÃO v1.19: LÓGICA ULTRA ROBUSTA BASEADA EM GEOMETRIA DE FÍSICA MÉDICA ---
         menor_dia_real = 0.0
         limiar_baixo_contraste = 0.0
         
-        # 1. Resolução Espacial (Linhas): Busca o menor diâmetro consistente (linha válida mais abaixo, índice MAX)
-        linhas_validas = []
+        # 1. Resolução Espacial: Procuramos o menor diâmetro (maior índice i) com sinal nas colunas de alto contraste (colunas 10 a 14)
+        # Filtramos linhas com preenchimento fantasma de ruído (soma_linha == 15 costuma ser artefato de borda)
+        linhas_com_sinal = []
         for i in range(15):
-            if np.sum(matriz_deteccao[i, :]) >= 2:
-                linhas_validas.append(i)
-        if len(linhas_validas) > 0:
-            menor_dia_real = diametros_y[np.max(linhas_validas)]
+            soma_linha = np.sum(matriz_deteccao[i, :])
+            if 1 <= soma_linha < 14: # Descarta linhas vazias ou linhas saturadas por artefatos de borda
+                if np.any(matriz_deteccao[i, 10:] == 1):
+                    linhas_com_sinal.append(i)
+        if len(linhas_com_sinal) > 0:
+            menor_dia_real = diametros_y[np.max(linhas_com_sinal)]
             
-        # 2. Baixo Contraste (Colunas): Busca a menor profundidade consistente (coluna válida mais à esquerda, índice MIN)
-        colunas_validas = []
+        # 2. Baixo Contraste: Procuramos a menor profundidade (menor índice j) com sinal nas linhas de furos grandes (linhas 0 a 4)
+        colunas_com_sinal = []
         for j in range(15):
-            if np.sum(matriz_deteccao[:, j]) >= 2:
-                colunas_validas.append(j)
-        if len(colunas_validas) > 0:
-            limiar_baixo_contraste = profundidades_x[np.min(colunas_validas)]
+            soma_coluna = np.sum(matriz_deteccao[:, j])
+            if 1 <= soma_coluna < 14: # Descarta colunas saturadas por artefatos
+                if np.any(matriz_deteccao[:5, j] == 1):
+                    colunas_com_sinal.append(j)
+        if len(colunas_com_sinal) > 0:
+            limiar_baixo_contraste = profundidades_x[np.min(colunas_com_sinal)]
 
         met_res_esp, met_threshold = st.columns(2)
         with met_res_esp:
@@ -149,8 +154,10 @@ if arquivo_dicom is not None:
         
         for i in range(15):
             detectados_na_linha = np.where(matriz_deteccao[i, :] == 1)[0]
-            if len(detectados_na_linha) > 0:
-                # O limite real de contraste de cada linha é o furo mais raso detectado (mais à esquerda -> índice j MÍNIMO)
+            soma_linha = np.sum(matriz_deteccao[i, :])
+            
+            # Só calcula o ponto se a linha não for um artefato saturado
+            if len(detectados_na_linha) > 0 and iframe_soma := soma_linha < 14:
                 menor_j = np.min(detectados_na_linha) 
                 prof_limite = profundidades_x[menor_j]
                 diam_atual = diametros_y[i]
